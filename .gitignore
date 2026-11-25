@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+.streamlit/secrets.toml
+*.mp3
+
+# The trained model is not included in this repository.
+model/*.h5
+model/*.keras
+!model/README.md
+!model/class_names.example.txt
+
