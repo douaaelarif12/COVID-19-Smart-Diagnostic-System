@@ -8,7 +8,7 @@ from pathlib import Path
 
 app = FastAPI(
     title="API Détection COVID-19",
-    description="API Binaire : COVID-19 vs Autres",
+    description="API académique de classification thoracique multiclasse",
     version="1.0"
 )
 
@@ -26,11 +26,14 @@ def load_ai_model():
         print("🔄 Chargement du modèle...")
         if not model_path.is_file() or not labels_path.is_file():
             raise FileNotFoundError("Modèle ou fichier model/class_names.txt absent.")
-        model = load_model(model_path)
-        class_names = [line.strip() for line in labels_path.read_text(encoding='utf-8').splitlines() if line.strip()]
-        num_classes = int(model.output_shape[-1])
-        if len(class_names) != num_classes:
+        loaded_model = load_model(model_path, compile=False)
+        loaded_class_names = [line.strip() for line in labels_path.read_text(encoding='utf-8').splitlines() if line.strip()]
+        num_classes = int(loaded_model.output_shape[-1])
+        if len(loaded_class_names) != num_classes:
             raise ValueError("Le nombre d'étiquettes ne correspond pas aux sorties du modèle.")
+
+        model = loaded_model
+        class_names = loaded_class_names
             
         print(f"✅ Configuration terminée. Classes actives : {class_names}")
         
@@ -47,7 +50,22 @@ def preprocess_image(image: Image.Image):
 
 @app.get("/")
 def home():
-    return {"status": "online", "message": "API COVID-19 prête."}
+    return {
+        "status": "online",
+        "model_loaded": model is not None,
+        "message": "API COVID-19 disponible.",
+    }
+
+@app.get("/health")
+def health():
+    if model is None:
+        raise HTTPException(status_code=503, detail="Modèle non chargé.")
+    return {
+        "status": "healthy",
+        "model_loaded": True,
+        "classes": class_names,
+        "output_count": int(model.output_shape[-1]),
+    }
 
 @app.post("/predict")
 async def predict(file: UploadFile = File(...)):

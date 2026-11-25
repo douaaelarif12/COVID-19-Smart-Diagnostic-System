@@ -17,7 +17,7 @@ Prototype académique de classification d'images thoraciques avec TensorFlow/Ker
 
 ## Limites actuelles
 
-- Le fichier entraîné `covid_detector.h5` n'est pas fourni.
+- Le fichier entraîné `covid_detector.h5` n'est pas publié dans le dépôt ; il doit être fourni localement.
 - Les données d'entraînement, le protocole de séparation et les métriques ne sont pas inclus ; aucune performance clinique n'est donc revendiquée.
 - Le contrôle de qualité vérifie seulement des propriétés élémentaires de l'image. Il ne prouve pas qu'une image est une radiographie thoracique valide.
 - Le score du réseau ne doit pas être interprété comme une probabilité clinique calibrée.
@@ -31,8 +31,12 @@ Prototype académique de classification d'images thoraciques avec TensorFlow/Ker
 ├── util.py                        # Prétraitement, messages et Grad-CAM
 ├── model/
 │   ├── README.md
-│   └── class_names.example.txt
+│   ├── class_names.example.txt
+│   └── class_names.txt
 ├── bgs/                           # Fond optionnel
+├── Dockerfile
+├── docker-compose.yml
+├── requirements-docker.txt
 ├── requirements.txt
 └── run.bat
 ```
@@ -40,16 +44,17 @@ Prototype académique de classification d'images thoraciques avec TensorFlow/Ker
 ## Préparation du modèle
 
 1. Placez le modèle dans `model/covid_detector.h5`.
-2. Copiez `model/class_names.example.txt` vers `model/class_names.txt`.
-3. Placez dans ce fichier une classe par ligne, dans l'ordre exact des sorties du modèle.
+2. Vérifiez `model/class_names.txt`, qui doit contenir une classe par ligne dans l'ordre exact des sorties du modèle.
 
 Exemple :
 
 ```text
 Normal
-Pneumonie
+Pneumonie Virale
 COVID-19
 ```
+
+Le modèle actuellement vérifié produit trois sorties Softmax. Le code source du livrable d'origine associe ces sorties, dans l'ordre, à `Normal`, `Pneumonie Virale` et `COVID-19`. Le fichier `labels.txt` fourni ne contient que deux lignes et n'est donc pas compatible avec ce modèle ; `model/class_names.txt` conserve l'association à trois classes utilisée par l'application d'origine.
 
 ## Installation
 
@@ -84,6 +89,41 @@ uvicorn api:app --reload
 - Interface : <http://localhost:8501>
 - API : <http://localhost:8000>
 - Swagger : <http://localhost:8000/docs>
+
+## Lancement avec Docker
+
+Docker évite l'incompatibilité entre TensorFlow 2.12 et Python 3.14 sur la machine hôte. Le modèle reste local et est monté en lecture seule dans les conteneurs ; il n'est pas intégré à l'image Docker.
+
+Vérifiez d'abord la présence de :
+
+```text
+model/covid_detector.h5
+model/class_names.txt
+```
+
+Construisez et démarrez Streamlit et FastAPI :
+
+```bash
+docker compose up --build -d
+```
+
+Vérifiez leur état :
+
+```bash
+docker compose ps
+```
+
+Consultez les journaux :
+
+```bash
+docker compose logs -f
+```
+
+Arrêtez les services :
+
+```bash
+docker compose down
+```
 
 ## Vérifications recommandées
 

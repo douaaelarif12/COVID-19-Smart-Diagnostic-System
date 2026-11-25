@@ -94,6 +94,8 @@ def load_lottie_url(url: str):
 
 # Définir le fond
 try:
+    if not Path('./bgs/bg5.png').is_file():
+        raise FileNotFoundError("Fond optionnel absent.")
     set_background('./bgs/bg5.png')
 except:
     pass
@@ -125,7 +127,7 @@ def load_model_and_labels():
         raise FileNotFoundError(
             "Étiquettes absentes : créez model/class_names.txt dans l'ordre exact des sorties."
         )
-    model = load_model(model_path)
+    model = load_model(model_path, compile=False)
 
     class_names = [line.strip() for line in labels_path.read_text(encoding='utf-8').splitlines() if line.strip()]
     num_classes = int(model.output_shape[-1])
@@ -150,7 +152,11 @@ st.markdown("**Veuillez uploader une radiographie ou un scanner thoracique**")
 
 col1, col2 = st.columns([2, 1])
 with col1:
-    file = st.file_uploader('', type=['jpeg', 'jpg', 'png'], label_visibility="collapsed")
+    file = st.file_uploader(
+        'Radiographie thoracique',
+        type=['jpeg', 'jpg', 'png'],
+        label_visibility="collapsed",
+    )
 with col2:
     # J'ai supprimé l'animation d'attente ici aussi si vous vouliez que ce soit totalement clean
     # Mais je garde le "waiting" à côté du bouton upload car c'est discret.
