@@ -10,6 +10,8 @@ import tempfile
 import time
 from pathlib import Path
 
+from model_config import load_and_validate_model_configuration
+
 # Import des fonctions utilitaires
 from util import (
     classify, 
@@ -119,6 +121,7 @@ with st.sidebar:
 def load_model_and_labels():
     model_path = Path('./model/covid_detector.h5')
     labels_path = Path('./model/class_names.txt')
+    metadata_path = Path('./model/model_metadata.json')
     if not model_path.is_file():
         raise FileNotFoundError(
             "Modèle absent : ajoutez model/covid_detector.h5 (voir model/README.md)."
@@ -136,12 +139,23 @@ def load_model_and_labels():
             f"Le modèle produit {num_classes} sorties, mais class_names.txt contient {len(class_names)} classes."
         )
 
-    return model, class_names
+    model_configuration = load_and_validate_model_configuration(
+        model, model_path, class_names, metadata_path
+    )
+
+    return model, class_names, model_configuration
 
 try:
     with st.spinner("🔄 Chargement du modèle de détection COVID-19..."):
-        model, class_names = load_model_and_labels()
-    st.success("✅ Modèle COVID chargé avec succès !")
+        model, class_names, model_configuration = load_model_and_labels()
+    st.success("✅ Modèle chargé et intégrité technique vérifiée.")
+    if not model_configuration["configuration_verified"]:
+        st.warning(
+            "⚠️ Configuration scientifique non certifiée : l'ordre des classes et le "
+            "prétraitement proviennent du code d'inférence d'origine, mais les artefacts "
+            "d'entraînement nécessaires à leur confirmation sont absents. Les résultats "
+            "restent expérimentaux."
+        )
 except Exception as e:
     st.error(f"❌ Erreur lors du chargement: {str(e)}")
     st.stop()

@@ -6,6 +6,8 @@ import io
 import tensorflow as tf
 from pathlib import Path
 
+from model_config import load_and_validate_model_configuration
+
 app = FastAPI(
     title="API Détection COVID-19",
     description="API académique de classification thoracique multiclasse",
@@ -15,12 +17,14 @@ app = FastAPI(
 # Variables globales
 model = None
 class_names = []
+model_configuration = None
 
 @app.on_event("startup")
 def load_ai_model():
-    global model, class_names
+    global model, class_names, model_configuration
     model_path = Path('./model/covid_detector.h5')
     labels_path = Path('./model/class_names.txt')
+    metadata_path = Path('./model/model_metadata.json')
     
     try:
         print("🔄 Chargement du modèle...")
@@ -32,8 +36,13 @@ def load_ai_model():
         if len(loaded_class_names) != num_classes:
             raise ValueError("Le nombre d'étiquettes ne correspond pas aux sorties du modèle.")
 
+        loaded_configuration = load_and_validate_model_configuration(
+            loaded_model, model_path, loaded_class_names, metadata_path
+        )
+
         model = loaded_model
         class_names = loaded_class_names
+        model_configuration = loaded_configuration
             
         print(f"✅ Configuration terminée. Classes actives : {class_names}")
         
@@ -58,18 +67,21 @@ def home():
 
 @app.get("/health")
 def health():
-    if model is None:
+    if model is None or model_configuration is None:
         raise HTTPException(status_code=503, detail="Modèle non chargé.")
     return {
         "status": "healthy",
         "model_loaded": True,
         "classes": class_names,
         "output_count": int(model.output_shape[-1]),
+        "model_sha256": model_configuration["model_sha256"],
+        "configuration_verified": model_configuration["configuration_verified"],
+        "configuration_warnings": model_configuration["warnings"],
     }
 
 @app.post("/predict")
 async def predict(file: UploadFile = File(...)):
-    if model is None:
+    if model is None or model_configuration is None:
         raise HTTPException(status_code=500, detail="Modèle non chargé.")
 
     if not file.content_type or not file.content_type.startswith("image/"):
@@ -98,6 +110,12 @@ async def predict(file: UploadFile = File(...)):
             "prediction": raw_class_name,
             "confidence_score": confidence,
             "confidence_percentage": f"{confidence*100:.2f}%",
+            "configuration_verified": model_configuration["configuration_verified"],
+            "configuration_warning": (
+                None
+                if model_configuration["configuration_verified"]
+                else "Ordre des classes et prétraitement non confirmés par les artefacts d'entraînement."
+            ),
             "medical_disclaimer": "Prototype académique non validé pour le diagnostic clinique."
         }
 

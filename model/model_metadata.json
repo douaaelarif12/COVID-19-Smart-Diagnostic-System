@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "model_file": "covid_detector.h5",
+  "sha256": "61a59482d674f9c1e78f487dd55f805e87bbfa6511bd0ee0d8cfeb9aa64ecc31",
+  "format": "Keras HDF5",
+  "keras_version_saved": "2.6.0",
+  "input": {
+    "shape": [null, 224, 224, 3],
+    "dtype": "float32",
+    "color_mode": "RGB"
+  },
+  "output": {
+    "count": 3,
+    "activation": "softmax",
+    "class_names": [
+      "Normal",
+      "Pneumonie Virale",
+      "COVID-19"
+    ]
+  },
+  "preprocessing": {
+    "resize": [224, 224],
+    "resize_method": "PIL.ImageOps.fit avec LANCZOS",
+    "normalization": "conversion float32 puis division par 255.0",
+    "source": "implémentation d'inférence du livrable d'origine (util.py)"
+  },
+  "architecture": {
+    "backbone": "base convolutionnelle de type VGG16 gelée",
+    "classifier": "AveragePooling2D, Flatten, Dense(128, relu), Dropout(0.2), Dense(3, softmax)",
+    "training_loss_saved": "categorical_crossentropy"
+  },
+  "verification": {
+    "model_structure_inspected": true,
+    "model_hash_verified": true,
+    "class_mapping_from_training": false,
+    "preprocessing_from_training": false,
+    "training_artifact_available": false
+  },
+  "provenance": {
+    "class_mapping_source": "Livrable2/app.py, code d'inférence d'origine",
+    "preprocessing_source": "Livrable2/util.py, code d'inférence d'origine",
+    "training_notebook_or_script_found": false
+  },
+  "warnings": [
+    "L'ordre des classes provient du code d'inférence d'origine, pas d'un générateur de données ou d'un notebook d'entraînement.",
+    "Le prétraitement provient du code d'inférence d'origine et n'a pas pu être comparé au pipeline d'entraînement.",
+    "Le fichier labels.txt fourni décrit un autre modèle binaire PNEUMONIA/NORMAL et ne doit pas être utilisé avec ce modèle à trois sorties."
+  ]
+}

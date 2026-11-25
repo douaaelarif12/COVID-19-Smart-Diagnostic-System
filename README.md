@@ -19,6 +19,7 @@ Prototype académique de classification d'images thoraciques avec TensorFlow/Ker
 
 - Le fichier entraîné `covid_detector.h5` n'est pas publié dans le dépôt ; il doit être fourni localement.
 - Les données d'entraînement, le protocole de séparation et les métriques ne sont pas inclus ; aucune performance clinique n'est donc revendiquée.
+- L'ordre des classes et le prétraitement sont cohérents avec le code d'inférence d'origine, mais ils ne sont pas confirmés par un artefact d'entraînement disponible.
 - Le contrôle de qualité vérifie seulement des propriétés élémentaires de l'image. Il ne prouve pas qu'une image est une radiographie thoracique valide.
 - Le score du réseau ne doit pas être interprété comme une probabilité clinique calibrée.
 
@@ -32,7 +33,9 @@ Prototype académique de classification d'images thoraciques avec TensorFlow/Ker
 ├── model/
 │   ├── README.md
 │   ├── class_names.example.txt
-│   └── class_names.txt
+│   ├── class_names.txt
+│   └── model_metadata.json        # Empreinte, contrat d'entrée/sortie et provenance
+├── model_config.py                # Validation bloquante de la configuration
 ├── bgs/                           # Fond optionnel
 ├── Dockerfile
 ├── docker-compose.yml
@@ -54,7 +57,9 @@ Pneumonie Virale
 COVID-19
 ```
 
-Le modèle actuellement vérifié produit trois sorties Softmax. Le code source du livrable d'origine associe ces sorties, dans l'ordre, à `Normal`, `Pneumonie Virale` et `COVID-19`. Le fichier `labels.txt` fourni ne contient que deux lignes et n'est donc pas compatible avec ce modèle ; `model/class_names.txt` conserve l'association à trois classes utilisée par l'application d'origine.
+Le modèle inspecté produit trois sorties Softmax. Le code source du livrable d'origine associe ces sorties, dans l'ordre, à `Normal`, `Pneumonie Virale` et `COVID-19`. Le fichier `labels.txt` fourni ne contient que deux lignes et appartient à un autre modèle binaire ; il n'est donc pas compatible avec ce modèle.
+
+L'application compare au démarrage le fichier local à `model/model_metadata.json` : empreinte SHA-256, forme d'entrée, nombre de sorties, activation et classes déclarées. Cela garantit la cohérence technique du fichier utilisé. En l'absence du notebook ou du script d'entraînement, l'ordre des classes et le prétraitement ne peuvent toutefois pas être certifiés scientifiquement ; cet état est affiché dans Streamlit et exposé par `/health` et `/predict`.
 
 ## Installation
 
@@ -99,6 +104,7 @@ Vérifiez d'abord la présence de :
 ```text
 model/covid_detector.h5
 model/class_names.txt
+model/model_metadata.json
 ```
 
 Construisez et démarrez Streamlit et FastAPI :
