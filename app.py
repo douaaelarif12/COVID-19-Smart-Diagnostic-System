@@ -1,87 +1,37 @@
 import streamlit as st
 from keras.models import load_model
-from PIL import Image
-import numpy as np
 import requests
 from streamlit_lottie import st_lottie
 from gtts import gTTS
 import os
 import tempfile
 import time
+import hashlib
 from pathlib import Path
 
+from inference import (
+    InvalidImageError,
+    check_image_contrast,
+    decode_image,
+    predict_image,
+)
 from model_config import load_and_validate_model_configuration
 
 # Import des fonctions utilitaires
 from util import (
-    classify, 
-    set_background, 
+    set_background,
     simple_attention_map,
     get_empathetic_message,
     get_doctor_animation_data,
-    is_chest_xray
 )
 
 # Configuration de la page
 st.set_page_config(
-    page_title="Diagnostic COVID-19 - IA Médicale",
+    page_title="Classification thoracique expérimentale",
     page_icon="🦠",
     layout="wide",
     initial_sidebar_state="expanded"
 )
-
-# Styles CSS personnalisés
-st.markdown("""
-    <style>
-    .main-title {
-        text-align: center;
-        color: #e53935;
-        font-size: 3em;
-        font-weight: bold;
-        margin-bottom: 10px;
-        text-shadow: 2px 2px 4px rgba(0,0,0,0.1);
-    }
-    .subtitle {
-        text-align: center;
-        color: #424242;
-        font-size: 1.2em;
-        margin-bottom: 30px;
-    }
-    .doctor-card {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        padding: 25px;
-        border-radius: 15px;
-        color: white;
-        box-shadow: 0 8px 16px rgba(0,0,0,0.2);
-        margin: 20px 0;
-        animation: fadeIn 0.5s;
-    }
-    .doctor-card-happy {
-        background: linear-gradient(135deg, #4caf50 0%, #81c784 100%);
-    }
-    .doctor-card-concerned {
-        background: linear-gradient(135deg, #f44336 0%, #ef5350 100%);
-    }
-    .alert-box {
-        background-color: #fff3cd;
-        border: 2px solid #ffc107;
-        padding: 20px;
-        border-radius: 10px;
-        margin: 20px 0;
-    }
-    .success-box {
-        background-color: #d4edda;
-        border: 2px solid #28a745;
-        padding: 20px;
-        border-radius: 10px;
-        margin: 20px 0;
-    }
-    @keyframes fadeIn {
-        from { opacity: 0; transform: translateY(20px); }
-        to { opacity: 1; transform: translateY(0); }
-    }
-    </style>
-""", unsafe_allow_html=True)
 
 # Fonction pour charger les animations Lottie
 @st.cache_data
@@ -91,7 +41,7 @@ def load_lottie_url(url: str):
         if r.status_code != 200:
             return None
         return r.json()
-    except:
+    except requests.RequestException:
         return None
 
 # Définir le fond
@@ -99,18 +49,30 @@ try:
     if not Path('./bgs/bg5.png').is_file():
         raise FileNotFoundError("Fond optionnel absent.")
     set_background('./bgs/bg5.png')
-except:
+except (FileNotFoundError, OSError):
     pass
 
 # Titre principal
-st.markdown('<h1 class="main-title">🦠 Système de Détection COVID-19</h1>', unsafe_allow_html=True)
-st.markdown('<p class="subtitle">Analyse d\'imagerie thoracique par Intelligence Artificielle</p>', unsafe_allow_html=True)
+st.title("🫁 Classification thoracique expérimentale", text_alignment="center")
+st.caption(
+    "Démonstrateur académique de classification d’images par Deep Learning",
+    text_alignment="center",
+)
+st.warning(
+    "**Usage pédagogique uniquement.** Cette application n’est pas un dispositif "
+    "médical, ne fournit pas de diagnostic et ne doit pas guider une décision de "
+    "soin. Faites interpréter toute radiographie par un professionnel qualifié.",
+    icon=":material/warning:",
+)
+
+st.session_state.setdefault("total_analyses", 0)
+st.session_state.setdefault("last_counted_file", None)
 
 # Sidebar (Minimaliste)
 with st.sidebar:
-    st.markdown("### 📊 Statistiques")
-    if 'total_analyses' not in st.session_state:
-        st.session_state.total_analyses = 0
+    st.markdown("### À propos")
+    st.caption("CNN Keras · entrée RGB 224 × 224 · trois classes")
+    st.markdown("### 📊 Session")
     st.metric("Analyses effectuées", st.session_state.total_analyses)
     
 
@@ -156,13 +118,17 @@ try:
             "d'entraînement nécessaires à leur confirmation sont absents. Les résultats "
             "restent expérimentaux."
         )
+    with st.expander("Configuration technique du modèle"):
+        st.write("Classes déclarées :", class_names)
+        st.code(model_configuration["model_sha256"], language=None)
+        st.caption("Empreinte SHA-256 du fichier local chargé")
 except Exception as e:
     st.error(f"❌ Erreur lors du chargement: {str(e)}")
     st.stop()
 
 # Upload
-st.markdown("## 📤 Téléchargement de l'image (Radio/Scanner)")
-st.markdown("**Veuillez uploader une radiographie ou un scanner thoracique**")
+st.markdown("## 1. Importer une image")
+st.caption("Formats acceptés : JPEG ou PNG · 10 Mio maximum · 64 pixels minimum par côté")
 
 col1, col2 = st.columns([2, 1])
 with col1:
@@ -180,47 +146,55 @@ with col2:
 
 # Traitement
 if file is not None:
-    image = Image.open(file).convert('RGB')
-    st.session_state.total_analyses += 1
-    
-    st.markdown("---")
+    contents = file.getvalue()
+    try:
+        image = decode_image(contents)
+    except InvalidImageError as exc:
+        st.error(f"Image refusée : {exc}")
+        st.stop()
+
+    file_fingerprint = hashlib.sha256(contents).hexdigest()
+    if st.session_state.get("last_counted_file") != file_fingerprint:
+        st.session_state.total_analyses += 1
+        st.session_state.last_counted_file = file_fingerprint
     
     # ÉTAPE 1: VALIDATION
-    st.markdown("## 🔍 Étape 1: Validation de l'image")
+    st.markdown("## 2. Contrôle technique")
     col_img, col_validation = st.columns([1, 1])
     
     with col_img:
         st.markdown("### 📷 Image reçue")
-        st.image(image, use_column_width=True, caption="Image analysée")
+        st.image(image, width="stretch", caption="Image analysée")
     
     with col_validation:
-        st.markdown("### ✅ Vérification")
+        st.markdown("### Contrôle de contraste")
         with st.spinner("🔍 Vérification en cours..."):
-            is_valid, validation_score, validation_reason = is_chest_xray(image)
+            is_valid, _, validation_reason = check_image_contrast(image)
         
         if is_valid:
             st.success("✅ **Contraste suffisant**")
             st.info(validation_reason)
         else:
             st.error("❌ **Attention**")
-            st.warning("L'image ne semble pas être une radiographie standard. L'analyse continue malgré tout.")
+            st.warning("L’image ne présente pas un contraste suffisant pour poursuivre.")
+            st.stop()
+
+    confirmed_xray = st.checkbox(
+        "Je confirme qu’il s’agit d’une radiographie thoracique dé-identifiée "
+        "et destinée uniquement à une démonstration pédagogique."
+    )
+    if not confirmed_xray:
+        st.info("Confirmez la nature de l’image avant de lancer la classification.")
+        st.stop()
     
     # ÉTAPE 2: CLASSIFICATION
-    st.markdown("---")
-    st.markdown("## 🤖 Étape 2: Analyse Détection COVID-19")
+    st.markdown("## 3. Classification expérimentale")
     
     with st.spinner("🧠 Analyse des tissus pulmonaires en cours..."):
-        progress_bar = st.progress(0)
-        for i in range(100):
-            time.sleep(0.01)
-            progress_bar.progress(i + 1)
-        
-        class_name, conf_score = classify(image, model, class_names)
-        
-        try:
-            class_idx = class_names.index(class_name)
-        except:
-            class_idx = 0
+        result = predict_image(image, model, class_names)
+        class_name = result.class_name
+        conf_score = result.score
+        class_idx = result.class_index
     
     st.success("✅ Analyse terminée !")
     
@@ -232,8 +206,7 @@ if file is not None:
     empathetic_msg = get_empathetic_message(class_name, conf_score)
     
     # RÉSULTATS
-    st.markdown("---")
-    st.markdown("## 🎯 Résultat expérimental de classification")
+    st.markdown("## Résultat expérimental")
     
     col_anim1, col_anim2, col_anim3 = st.columns([1, 2, 1])
     with col_anim2:
@@ -244,56 +217,54 @@ if file is not None:
         if lottie_result:
             st_lottie(lottie_result, height=250, key=f"result_animation_{emotion}")
         else:
-            st.markdown(f"<h1 style='text-align: center; font-size: 5em;'>{doctor_data['icon']}</h1>", unsafe_allow_html=True)
+            st.title(doctor_data["icon"], text_alignment="center")
+
+    with st.container(border=True):
+        st.subheader(f"{doctor_data['icon']} {doctor_data['status']}")
+        result_col, score_col = st.columns(2)
+        result_col.metric("Classe majoritaire", class_name)
+        score_col.metric("Score du modèle", f"{conf_score * 100:.2f}%")
     
-    card_class = "doctor-card-happy" if emotion == "happy" else "doctor-card-concerned"
-    st.markdown(f"""
-    <div class='doctor-card {card_class}'>
-        <h2 style='text-align: center; margin: 0;'>{doctor_data['icon']} {doctor_data['status']}</h2>
-        <h3 style='text-align: center; margin: 10px 0;'>Résultat: {class_name}</h3>
-        <h3 style='text-align: center; margin: 10px 0;'>Probabilité: {conf_score*100:.2f}%</h3>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    st.markdown("### 📊 Probabilités calculées")
+    st.markdown("### Scores par classe")
     confidence_percentage = int(conf_score * 100)
     
-    bar_color = "red" if emotion == "concerned" else "green"
-    st.markdown(f"<style>.stProgress > div > div > div > div {{ background-color: {bar_color}; }}</style>", unsafe_allow_html=True)
-    st.progress(float(conf_score))
-    
+    for score_class, score_value in result.scores.items():
+        st.caption(f"{score_class} — {score_value * 100:.2f}%")
+        st.progress(float(score_value))
+
     col_conf1, col_conf2 = st.columns(2)
     with col_conf1:
-        st.metric("Confiance du modèle", f"{confidence_percentage}%")
+        st.metric("Score maximal", f"{confidence_percentage}%")
     with col_conf2:
-        if conf_score > 0.90:
-            st.metric("Certitude", "Très élevée", delta="+++")
-        elif conf_score > 0.75:
-            st.metric("Certitude", "Élevée", delta="++")
-        else:
-            st.metric("Certitude", "Moyenne", delta="⚠️")
+        st.metric("Classe majoritaire", class_name)
+    st.caption(
+        "Ces scores sont les sorties Softmax du réseau. Ils ne représentent pas "
+        "une probabilité clinique et leur calibration n’a pas été évaluée."
+    )
     
     # MESSAGE MÉDECIN
-    st.markdown("---")
-    st.markdown("## 💬 Interprétation")
+    st.markdown("## Interprétation")
     
     st.markdown(f"### {empathetic_msg['greeting']}")
     st.markdown(empathetic_msg['main_message'])
     
     if is_sick:
-        st.markdown(f'<div class="alert-box">{empathetic_msg["reassurance"]}</div>', unsafe_allow_html=True)
-        st.error(empathetic_msg['urgency'])
+        st.warning(empathetic_msg["reassurance"], icon=":material/warning:")
+        st.error(empathetic_msg['urgency'], icon=":material/medical_services:")
     else:
-        st.markdown(f'<div class="success-box">{empathetic_msg["reassurance"]}</div>', unsafe_allow_html=True)
-        st.info(empathetic_msg['prevention'])
+        st.info(empathetic_msg["reassurance"], icon=":material/info:")
+        st.caption(empathetic_msg['prevention'])
     
     # AUDIO
-    st.markdown("---")
-    st.markdown("## 🔊 Rapport Audio")
+    st.markdown("## Rapport audio")
     
     col_audio1, col_audio2 = st.columns([3, 2])
     with col_audio1:
-        if st.button("🎙️ Écouter le rapport", use_container_width=True):
+        if st.button(
+            "Écouter le rapport",
+            icon=":material/volume_up:",
+            width="stretch",
+        ):
             with st.spinner("🎙️ Génération de la voix..."):
                 try:
                     if is_sick:
@@ -317,32 +288,36 @@ if file is not None:
                     try:
                         time.sleep(0.5)
                         os.unlink(temp_filename)
-                    except:
+                    except OSError:
                         pass
                 except Exception as e:
                     st.error(f"❌ Erreur audio: {str(e)}")
     
     # ATTENTION MAP
-    st.markdown("---")
-    st.markdown("## 🔥 Zones affectées (Heatmap)")
+    st.markdown("## 4. Carte d’attention Grad-CAM")
+    st.caption(
+        "Visualisation indicative des régions qui influencent la sortie du réseau ; "
+        "elle ne localise pas une lésion et ne constitue pas une explication clinique."
+    )
     
-    with st.spinner("🔥 Localisation des zones suspectes..."):
+    with st.spinner("Génération de la carte d’attention..."):
         attention_map = simple_attention_map(model, image, class_idx)
     
     if attention_map is not None:
         col_heat1, col_heat2 = st.columns(2)
         with col_heat1:
             st.markdown("#### 📷 Image originale")
-            st.image(image, use_column_width=True)
+            st.image(image, width="stretch")
         with col_heat2:
-            st.markdown("#### 🔥 Zones identifiées par l'IA")
-            st.image(attention_map, use_column_width=True)
+            st.markdown("#### Carte d’attention superposée")
+            st.image(attention_map, width="stretch")
     else:
         st.warning("⚠️ Impossible de générer la carte d'attention")
 
     # Nouvelle analyse
-    st.markdown("---")
-    if st.button("🔄 Analyser une autre image", use_container_width=True):
+    if st.button(
+        "Analyser une autre image",
+        icon=":material/refresh:",
+        width="stretch",
+    ):
         st.rerun()
-
-# J'ai supprimé tout le bloc 'else' qui était ici (le message d'accueil et l'avion)

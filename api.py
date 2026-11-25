@@ -1,25 +1,16 @@
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from keras.models import load_model
-from PIL import Image, ImageOps
-import numpy as np
-import io
-import tensorflow as tf
 from pathlib import Path
 
+from inference import InvalidImageError, check_image_contrast, decode_image, predict_image
 from model_config import load_and_validate_model_configuration
-
-app = FastAPI(
-    title="API Détection COVID-19",
-    description="API académique de classification thoracique multiclasse",
-    version="1.0"
-)
 
 # Variables globales
 model = None
 class_names = []
 model_configuration = None
 
-@app.on_event("startup")
 def load_ai_model():
     global model, class_names, model_configuration
     model_path = Path('./model/covid_detector.h5')
@@ -47,15 +38,27 @@ def load_ai_model():
         print(f"✅ Configuration terminée. Classes actives : {class_names}")
         
     except Exception as e:
-        print(f"❌ Erreur critique : {e}")
+        model = None
+        class_names = []
+        model_configuration = None
+        raise RuntimeError(f"Impossible de charger le modèle : {e}") from e
 
-def preprocess_image(image: Image.Image):
-    image = ImageOps.fit(image, (224, 224), Image.Resampling.LANCZOS)
-    img_array = np.asarray(image)
-    normalized_image_array = (img_array.astype(np.float32) / 255.0)
-    data = np.ndarray(shape=(1, 224, 224, 3), dtype=np.float32)
-    data[0] = normalized_image_array
-    return data
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    load_ai_model()
+    yield
+
+
+app = FastAPI(
+    title="API de classification thoracique expérimentale",
+    description=(
+        "API académique multiclasse. Elle ne constitue pas un dispositif médical "
+        "et ne fournit pas de diagnostic."
+    ),
+    version="1.1.0",
+    lifespan=lifespan,
+)
 
 @app.get("/")
 def home():
@@ -84,32 +87,35 @@ async def predict(file: UploadFile = File(...)):
     if model is None or model_configuration is None:
         raise HTTPException(status_code=500, detail="Modèle non chargé.")
 
-    if not file.content_type or not file.content_type.startswith("image/"):
-        raise HTTPException(status_code=400, detail="Fichier image requis.")
+    accepted_content_types = {"image/jpeg", "image/png"}
+    if file.content_type not in accepted_content_types:
+        raise HTTPException(status_code=415, detail="Format requis : JPEG ou PNG.")
 
     try:
         contents = await file.read(10 * 1024 * 1024 + 1)
-        if len(contents) > 10 * 1024 * 1024:
-            raise HTTPException(status_code=413, detail="Image trop volumineuse (maximum 10 Mio).")
-        image = Image.open(io.BytesIO(contents)).convert('RGB')
-        
-        processed_data = preprocess_image(image)
-        prediction = model.predict(processed_data)
-        index = np.argmax(prediction)
-        
-        confidence = float(prediction[0][index])
-        
-        # Récupération du nom de la classe
-        if index < len(class_names):
-            raw_class_name = class_names[index]
-        else:
-            raw_class_name = "Inconnu"
+        image = decode_image(contents)
+        contrast_valid, contrast_value, contrast_message = check_image_contrast(image)
+        if not contrast_valid:
+            raise HTTPException(status_code=422, detail=contrast_message)
+        result = predict_image(image, model, class_names)
 
         return {
             "filename": file.filename,
-            "prediction": raw_class_name,
-            "confidence_score": confidence,
-            "confidence_percentage": f"{confidence*100:.2f}%",
+            "prediction": result.class_name,
+            "class_index": result.class_index,
+            "model_score": result.score,
+            "confidence_score": result.score,
+            "confidence_percentage": f"{result.score * 100:.2f}%",
+            "scores_by_class": result.scores,
+            "input_validation": {
+                "format_valid": True,
+                "contrast_standard_deviation": contrast_value,
+                "chest_xray_verified": False,
+                "warning": (
+                    "Le serveur valide le fichier et son contraste, mais ne peut pas "
+                    "confirmer qu'il s'agit d'une radiographie thoracique."
+                ),
+            },
             "configuration_verified": model_configuration["configuration_verified"],
             "configuration_warning": (
                 None
@@ -121,5 +127,8 @@ async def predict(file: UploadFile = File(...)):
 
     except HTTPException:
         raise
+    except InvalidImageError as e:
+        status_code = 413 if "volumineuse" in str(e) else 422
+        raise HTTPException(status_code=status_code, detail=str(e)) from e
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Erreur analyse : {str(e)}")
+        raise HTTPException(status_code=500, detail="Erreur interne pendant l'analyse.") from e

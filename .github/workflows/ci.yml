@@ -1,0 +1,24 @@
+name: Tests
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install lightweight test dependencies
+        run: python -m pip install numpy==1.23.5 pillow==12.3.0
+      - name: Compile sources
+        run: python -m py_compile inference.py model_config.py evaluate.py
+      - name: Run unit tests
+        run: python -m unittest discover -s tests -v

@@ -5,6 +5,9 @@ venv/
 .env
 .streamlit/secrets.toml
 *.mp3
+reports/
+data/
+datasets/
 
 # The trained model is not included in this repository.
 model/*.h5
